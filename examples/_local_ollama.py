@@ -53,14 +53,20 @@ async def smoke_check_models(client: AsyncOpenAI) -> None:
         print(f"Warning: couldn't reach models endpoint at {client.__dict__.get('base_url', OLLAMA_URL)}: {e}")
 
 
-def try_set_default_client(url: Optional[str] = None, api_key: Optional[str] = None) -> None:
+def try_set_default_client(url: Optional[str] = None, api_key: Optional[str] = None, use_for_tracing: bool = False) -> None:
     """Set the repository's default OpenAI client to an Ollama-backed AsyncOpenAI client.
+
+    Args:
+        url: Optional override for the Ollama base URL.
+        api_key: Optional override for the Ollama API key.
+        use_for_tracing: Whether this client should also be used for tracing. Defaults to False
+            because Ollama does not accept OpenAI tracing keys.
 
     This is wrapped in a try/except so examples remain robust in dev environments
     that don't have the `openai` package installed.
     """
     try:
-        set_default_openai_client(make_ollama_client(url=url, api_key=api_key))
+        set_default_openai_client(make_ollama_client(url=url, api_key=api_key), use_for_tracing=use_for_tracing)
     except Exception:
         # Swallow any errors to avoid breaking the examples when dependencies are missing.
         pass
