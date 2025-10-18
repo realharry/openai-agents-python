@@ -1,5 +1,30 @@
 # Examples
 
+This folder contains curated example agents and patterns demonstrating how to use the OpenAI Agents SDK. Each subfolder contains a focused example or set of examples; see the individual subfolder README files for detailed instructions, code walkthroughs, and usage notes.
+
+For a recommended learning order (simple → advanced) and quick "try it" commands, see `examples/ORDERED.md`.
+
+Notes
+
+- This README intentionally provides only brief summaries. For usage, setup and examples for each item, consult the README.md inside the corresponding subfolder.
+- Most examples assume you have the repository dependencies installed and configured. Refer to the top-level `README.md` and `AGENTS.md` for environment setup and run instructions.
+
+How to run the examples (quick)
+
+- Read the subfolder `README.md` first — many examples list prerequisites, required env vars, or provider keys.
+- Common command patterns used in this repo:
+
+  ```bash
+  # Run a single example script
+  uv run python examples/<folder>/script.py
+
+  # Run a module-style example
+  uv run python -m examples.<folder>
+  ```
+
+If you'd like, I can normalize entrypoints across examples (add `main.py` wrappers) or open a PR that adds a top-level tutorial with a guided walkthrough for the first 4 examples.
+# Examples
+
 This folder contains curated example agents and patterns demonstrating how to use the OpenAI Agents SDK. Each subfolder contains a focused example or set of examples; see the individual subfolder README files for detailed instructions, code walkthroughs, and usage notes. The list below gives a short one-line summary of each examples subfolder.
 
 - `agent_patterns/` — Collection of higher-level agent architecture patterns and reusable templates for building complex agents.
