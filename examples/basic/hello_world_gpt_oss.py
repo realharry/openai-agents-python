@@ -1,29 +1,25 @@
 import asyncio
 import logging
+import os
+from typing import Optional
 
-from openai import AsyncOpenAI
-
-from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+from agents import Agent, Runner, set_tracing_disabled
+from examples._local_ollama import make_chat_model, smoke_check_models, make_ollama_client
 
 set_tracing_disabled(True)
 logging.basicConfig(level=logging.DEBUG)
 
-# This is an example of how to use gpt-oss with Ollama.
-# Refer to https://cookbook.openai.com/articles/gpt-oss/run-locally-ollama for more details.
-# If you prefer using LM Studio, refer to https://cookbook.openai.com/articles/gpt-oss/run-locally-lmstudio
-gpt_oss_model = OpenAIChatCompletionsModel(
-    model="gpt-oss:20b",
-    openai_client=AsyncOpenAI(
-        base_url="http://localhost:11434/v1",
-        api_key="ollama",
-    ),
-)
+
+GPT_OSS_MODEL: str = os.environ.get("GPT_OSS_MODEL", "gpt-oss:20b")
+
+
+gpt_oss_model = make_chat_model(GPT_OSS_MODEL)
 
 
 async def main():
-    # Note that using a custom outputType for an agent may not work well with gpt-oss models.
-    # Consider going with the default "text" outputType.
-    # See also: https://github.com/openai/openai-agents-python/issues/1414
+    client = make_ollama_client()
+    await smoke_check_models(client)
+
     agent = Agent(
         name="Assistant",
         instructions="You're a helpful assistant. You provide a concise answer to the user's question.",

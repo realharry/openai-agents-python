@@ -23,7 +23,9 @@ How to run the examples (quick)
   ```
 
 If you'd like, I can normalize entrypoints across examples (add `main.py` wrappers) or open a PR that adds a top-level tutorial with a guided walkthrough for the first 4 examples.
-# Examples
+
+
+## Examples
 
 This folder contains curated example agents and patterns demonstrating how to use the OpenAI Agents SDK. Each subfolder contains a focused example or set of examples; see the individual subfolder README files for detailed instructions, code walkthroughs, and usage notes. The list below gives a short one-line summary of each examples subfolder.
 

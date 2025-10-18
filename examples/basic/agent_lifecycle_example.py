@@ -5,6 +5,10 @@ from typing import Any
 from pydantic import BaseModel
 
 from agents import Agent, AgentHooks, RunContextWrapper, Runner, Tool, function_tool
+import os
+from openai import AsyncOpenAI
+from agents import set_default_openai_client
+from examples._local_ollama import try_set_default_client
 
 
 class CustomAgentHooks(AgentHooks):
@@ -80,6 +84,12 @@ start_agent = Agent(
     handoffs=[multiply_agent],
     hooks=CustomAgentHooks(display_name="Start Agent"),
 )
+
+# Optional: configure default OpenAI client to point to Ollama if present.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/v1")
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")
+
+try_set_default_client()
 
 
 async def main() -> None:

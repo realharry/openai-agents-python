@@ -14,6 +14,10 @@ from agents import (
     Usage,
     function_tool,
 )
+import os
+from openai import AsyncOpenAI
+from agents import set_default_openai_client
+from examples._local_ollama import try_set_default_client
 from agents.items import ModelResponse, TResponseInputItem
 
 
@@ -93,6 +97,12 @@ class ExampleHooks(RunHooks):
 
 
 hooks = ExampleHooks()
+
+# Optional: if OLLAMA_URL is set (or default), configure a default OpenAI client to talk to Ollama.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/v1")
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")
+
+try_set_default_client()
 
 ###
 
