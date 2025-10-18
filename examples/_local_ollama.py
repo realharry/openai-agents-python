@@ -34,23 +34,30 @@ def make_chat_model(model_name: str, client: Optional[AsyncOpenAI] = None) -> Op
     return OpenAIChatCompletionsModel(model=model_name, openai_client=client)
 
 
-async def smoke_check_models(client: AsyncOpenAI) -> None:
-    """Try to fetch `/models` from Ollama and print available names (best-effort).
+async def smoke_check_models(client: Optional[AsyncOpenAI] = None) -> None:
+    """Try to fetch `/models` from Ollama using a raw HTTP request and print
+    available names (best-effort).
 
-    This is a non-critical informational check and will silently print a warning
-    if the endpoint is unreachable instead of raising.
+    This avoids depending on SDK internals or method signatures.
     """
     try:
-        resp = await client.get("/models")
-        # Attempt to parse JSON. Ollama returns a list of model objects.
-        data = await resp.json()
-        if isinstance(data, list):
-            names = [m.get("name") for m in data]
-        else:
-            names = None
+        import httpx
+
+        base = OLLAMA_URL
+        # If an AsyncOpenAI client was provided, try to read a base_url attribute.
+        if client is not None:
+            base = getattr(client, "base_url", base)
+
+        url = base.rstrip("/") + "/models"
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            resp = await http.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+
+        names = [m.get("name") for m in data] if isinstance(data, list) else None
         print("Ollama models available:", names)
     except Exception as e:  # pragma: no cover - best-effort example helper
-        print(f"Warning: couldn't reach models endpoint at {client.__dict__.get('base_url', OLLAMA_URL)}: {e}")
+        print(f"Warning: couldn't reach models endpoint at {OLLAMA_URL}: {e}")
 
 
 def try_set_default_client(url: Optional[str] = None, api_key: Optional[str] = None, use_for_tracing: bool = False) -> None:
