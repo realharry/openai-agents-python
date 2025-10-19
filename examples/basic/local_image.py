@@ -10,11 +10,11 @@ from agents import Agent, Runner
 # Attempt to import the shared Ollama helpers; if running the script directly,
 # add the repo root to sys.path so the `examples` package is importable.
 try:
-    from examples._local_ollama import make_chat_model, try_set_default_client
+    from examples._local_ollama import make_model_for_ollama, try_set_default_client
 except ModuleNotFoundError:
     repo_root = Path(__file__).resolve().parent.parent.parent
     sys.path.insert(0, str(repo_root))
-    from examples._local_ollama import make_chat_model, try_set_default_client
+    from examples._local_ollama import make_model_for_ollama, try_set_default_client
 
 FILEPATH = os.path.join(os.path.dirname(__file__), "media/image_bison.jpg")
 
@@ -31,7 +31,8 @@ async def main():
 
     # Configure Ollama-backed client and model (if available)
     try_set_default_client()
-    model = make_chat_model(os.environ.get("OLLAMA_MODEL", "gemma3:1b"))
+    model, used_responses = make_model_for_ollama(os.environ.get("OLLAMA_MODEL", "gemma3:1b"))
+    print(f"[info] using {'Responses' if used_responses else 'ChatCompletions'} API for model calls")
 
     agent = Agent(
         name="Assistant",

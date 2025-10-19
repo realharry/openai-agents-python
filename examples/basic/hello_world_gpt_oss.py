@@ -4,7 +4,7 @@ import os
 from typing import Optional
 
 from agents import Agent, Runner, set_tracing_disabled
-from examples._local_ollama import make_chat_model, smoke_check_models, make_ollama_client
+from examples._local_ollama import make_model_for_ollama, smoke_check_models, make_ollama_client
 
 set_tracing_disabled(True)
 logging.basicConfig(level=logging.DEBUG)
@@ -13,7 +13,8 @@ logging.basicConfig(level=logging.DEBUG)
 GPT_OSS_MODEL: str = os.environ.get("GPT_OSS_MODEL", "gpt-oss:20b")
 
 
-gpt_oss_model = make_chat_model(GPT_OSS_MODEL)
+gpt_oss_model, used_responses = make_model_for_ollama(GPT_OSS_MODEL)
+print(f"[info] using {'Responses' if used_responses else 'ChatCompletions'} API for model calls")
 
 
 async def main():

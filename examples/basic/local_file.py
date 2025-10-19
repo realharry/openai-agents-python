@@ -11,11 +11,11 @@ from agents import Agent, Runner
 # directory becomes sys.path[0]. Try importing helpers from the package first;
 # if that fails, add the repository root to sys.path and import again.
 try:
-    from examples._local_ollama import make_chat_model, try_set_default_client
+    from examples._local_ollama import make_model_for_ollama, try_set_default_client
 except ModuleNotFoundError:
     repo_root = Path(__file__).resolve().parent.parent.parent
     sys.path.insert(0, str(repo_root))
-    from examples._local_ollama import make_chat_model, try_set_default_client
+    from examples._local_ollama import make_model_for_ollama, try_set_default_client
 
 FILEPATH = os.path.join(os.path.dirname(__file__), "media/partial_o3-and-o4-mini-system-card.pdf")
 
@@ -47,7 +47,8 @@ async def main():
     try_set_default_client()
 
     # Create a model configured via OLLAMA_MODEL (defaults to gemma3:1b)
-    model = make_chat_model(os.environ.get("OLLAMA_MODEL", "gemma3:1b"))
+    model, used_responses = make_model_for_ollama(os.environ.get("OLLAMA_MODEL", "gemma3:1b"))
+    print(f"[info] using {'Responses' if used_responses else 'ChatCompletions'} API for model calls")
 
     agent = Agent(
         name="Assistant",

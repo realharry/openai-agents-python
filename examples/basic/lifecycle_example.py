@@ -2,7 +2,18 @@ import asyncio
 import random
 from typing import Any, Optional
 
-from pydantic import BaseModel
+try:
+    from pydantic import BaseModel
+except Exception:  # pragma: no cover - optional dev dependency
+    # pydantic is optional for the examples. Provide a minimal fallback so the
+    # example can still run and show hooks without failing during import.
+    class BaseModel:  # type: ignore
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+        def dict(self):
+            return self.__dict__
+    print("[warning] pydantic is not installed; using a minimal fallback BaseModel. For full validation install 'pydantic'.")
 
 from agents import (
     Agent,
@@ -15,9 +26,33 @@ from agents import (
     function_tool,
 )
 import os
+import sys
+import pathlib
+import importlib.util
 from openai import AsyncOpenAI
 from agents import set_default_openai_client
-from examples._local_ollama import try_set_default_client
+
+# When running this file directly (python examples/basic/lifecycle_example.py),
+# the `examples` package may not be importable. Ensure the repository root is on
+# sys.path and provide a file-based fallback import for examples/_local_ollama.py.
+repo_root = pathlib.Path(__file__).resolve().parents[2]
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
+try:
+    from examples._local_ollama import try_set_default_client
+except Exception:
+    # Try loading the file directly from examples/_local_ollama.py
+    try:
+        mod_path = repo_root / "examples" / "_local_ollama.py"
+        spec = importlib.util.spec_from_file_location("examples._local_ollama", str(mod_path))
+        _mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_mod)  # type: ignore[attr-defined]
+        try_set_default_client = getattr(_mod, "try_set_default_client")
+    except Exception:
+        # Final fallback: no-op function so the example can run without the helper.
+        def try_set_default_client(*args, **kwargs):
+            return None
 from agents.items import ModelResponse, TResponseInputItem
 
 
@@ -104,6 +139,17 @@ OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")
 
 try_set_default_client()
 
+# Create models explicitly for agents so we can control which API shape is used
+try:
+    from examples._local_ollama import make_model_for_ollama
+except Exception:
+    def make_model_for_ollama(name, client=None):
+        return (None, False)
+
+# Create a model instance and print the API chosen (Responses vs Chat)
+_model, _used_responses = make_model_for_ollama(os.environ.get("OLLAMA_MODEL", "gemma3:1b"))
+print(f"[info] using {'Responses' if _used_responses else 'ChatCompletions'} API for model calls")
+
 ###
 
 
@@ -127,6 +173,7 @@ multiply_agent = Agent(
     name="Multiply Agent",
     instructions="Multiply the number by 2 and then return the final result.",
     tools=[multiply_by_two],
+    model=_model,
     output_type=FinalResult,
     hooks=LoggingHooks(),
 )
@@ -135,6 +182,7 @@ start_agent = Agent(
     name="Start Agent",
     instructions="Generate a random number. If it's even, stop. If it's odd, hand off to the multiplier agent.",
     tools=[random_number],
+    model=_model,
     output_type=FinalResult,
     handoffs=[multiply_agent],
     hooks=LoggingHooks(),
@@ -145,6 +193,12 @@ async def main() -> None:
     user_input = input("Enter a max number: ")
     try:
         max_number = int(user_input)
+        # Diagnostic: print the concrete model objects attached to each agent so
+        # we can confirm what implementation (Responses vs ChatCompletions) is
+        # actually being used at runtime.
+        print("[debug] start_agent.model:", type(start_agent.model), repr(start_agent.model))
+        print("[debug] multiply_agent.model:", type(multiply_agent.model), repr(multiply_agent.model))
+
         await Runner.run(
             start_agent,
             hooks=hooks,

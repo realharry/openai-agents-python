@@ -3,11 +3,12 @@ import os
 from typing import Optional
 
 from agents import Agent, Runner
-from examples._local_ollama import make_chat_model
+from examples._local_ollama import make_model_for_ollama
 
 
 async def main():
-    model = make_chat_model(os.environ.get("OLLAMA_MODEL", "gemma3:1b"))
+    model, used_responses = make_model_for_ollama(os.environ.get("OLLAMA_MODEL", "gemma3:1b"))
+    print(f"[info] using {'Responses' if used_responses else 'ChatCompletions'} API for model calls")
 
     agent = Agent(
         name="Assistant",

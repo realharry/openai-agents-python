@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import httpx
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -290,7 +291,9 @@ class OpenAIChatCompletionsModel(Model):
 
         stream_param: Literal[True] | Omit = True if stream else omit
 
-        ret = await self._get_client().chat.completions.create(
+        try:
+            logger.debug("Calling chat.completions.create on base_url=%s", getattr(self._get_client(), "base_url", None))
+            ret = await self._get_client().chat.completions.create(
             model=self.model,
             messages=converted_messages,
             tools=tools_param,
@@ -314,6 +317,106 @@ class OpenAIChatCompletionsModel(Model):
             metadata=self._non_null_or_omit(model_settings.metadata),
             **(model_settings.extra_args or {}),
         )
+
+        except Exception as e:
+            # Log helpful diagnostic details so callers can see the HTTP error
+            resp = getattr(e, "response", None)
+            try:
+                if resp is not None:
+                    logger.error("Chat completions call failed: status=%s body=%s", getattr(resp, "status_code", None), getattr(resp, "text", None))
+            except Exception:
+                pass
+
+            # If the SDK returned a 404, try a direct HTTP POST to the Ollama
+            # chat completions endpoint. Some Ollama builds respond differently
+            # to SDK requests; a raw httpx POST to /v1/chat/completions often works
+            # (see examples/_local_ollama.py probe behavior). This is a best-effort
+            # fallback intended for local dev only.
+            try:
+                status_code = getattr(resp, "status_code", None)
+                if status_code == 404:
+                    base = str(getattr(self._get_client(), "base_url", "")).rstrip("/")
+                    post_url = base + "/v1/chat/completions"
+                    headers = {"Content-Type": "application/json"}
+                    # If the AsyncOpenAI client has an api_key attribute, include it
+                    try:
+                        api_key = getattr(self._get_client(), "api_key", None)
+                        if api_key:
+                            headers["Authorization"] = f"Bearer {api_key}"
+                    except Exception:
+                        pass
+
+                    # Build a POST body mirroring the SDK call so Ollama can honour
+                    # response_format and other settings (e.g., tools, temperature).
+                    body = {"model": str(self.model), "messages": converted_messages}
+                    # Include response_format if provided (omit sentinel is handled by Converter)
+                    # Use the module-level `omit` sentinel where available.
+                    try:
+                        if response_format is not None and response_format is not getattr(__import__("openai"), "omit", object()):
+                            body["response_format"] = response_format
+                    except Exception:
+                        if response_format is not None:
+                            body["response_format"] = response_format
+
+                    # Include tools and tool choice when present
+                    try:
+                        if tools_param is not None and tools_param is not getattr(__import__("openai"), "omit", object()):
+                            body["tools"] = converted_tools
+                    except Exception:
+                        if converted_tools:
+                            body["tools"] = converted_tools
+
+                    try:
+                        if tool_choice is not None and tool_choice is not getattr(__import__("openai"), "omit", object()):
+                            body["tool_choice"] = tool_choice
+                    except Exception:
+                        if tool_choice is not None:
+                            body["tool_choice"] = tool_choice
+
+                    # Common scalar params
+                    if model_settings:
+                        if getattr(model_settings, "temperature", None) is not None:
+                            body["temperature"] = model_settings.temperature
+                        if getattr(model_settings, "top_p", None) is not None:
+                            body["top_p"] = model_settings.top_p
+                        if getattr(model_settings, "max_tokens", None) is not None:
+                            body["max_tokens"] = model_settings.max_tokens
+                        if getattr(model_settings, "frequency_penalty", None) is not None:
+                            body["frequency_penalty"] = model_settings.frequency_penalty
+                        if getattr(model_settings, "presence_penalty", None) is not None:
+                            body["presence_penalty"] = model_settings.presence_penalty
+
+                    # Parallel tool calls flag
+                    try:
+                        if parallel_tool_calls is not None:
+                            body["parallel_tool_calls"] = parallel_tool_calls
+                    except Exception:
+                        pass
+
+                    # Extra args
+                    try:
+                        if model_settings and getattr(model_settings, "extra_args", None):
+                            for k, v in (model_settings.extra_args or {}).items():
+                                body[k] = v
+                    except Exception:
+                        pass
+                    async with httpx.AsyncClient(timeout=30.0) as http:
+                        r = await http.post(post_url, json=body, headers=headers)
+                        # If this succeeds, construct a ChatCompletion from the JSON
+                        if r.status_code == 200:
+                            try:
+                                j = r.json()
+                                # Build a ChatCompletion pydantic model from the response
+                                ret = ChatCompletion(**j)
+                                return ret
+                            except Exception:
+                                # Fall through to re-raise original if parsing fails
+                                pass
+            except Exception:
+                # Ignore and re-raise original error below
+                pass
+
+            raise
 
         if isinstance(ret, ChatCompletion):
             return ret

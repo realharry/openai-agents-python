@@ -93,7 +93,10 @@ class BackendSpanExporter(TracingExporter):
             return
 
         if not self.api_key:
-            logger.warning("OPENAI_API_KEY is not set, skipping trace export")
+            # Tracing is optional — make this a debug message so local runs without
+            # an OpenAI API key don't produce noisy warnings. Users who enable
+            # tracing should set OPENAI_API_KEY or provide one via the constructor.
+            logger.debug("OPENAI_API_KEY is not set, skipping trace export")
             return
 
         data = [item.export() for item in items if item.export()]
