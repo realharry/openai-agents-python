@@ -28,6 +28,86 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")
 
 
+from agents.models.interface import Model
+
+
+class _LocalOllamaChatShim(Model):
+    """A small httpx-based shim that posts to /v1/chat/completions on a local
+    Ollama server and returns a minimal ModelResponse. Used to avoid SDK
+    incompatibilities with certain Ollama builds.
+    """
+    def __init__(self, model: str, base: str, api_key: Optional[str]):
+        self.model = model
+        self._base = base
+        self._api_key = api_key
+
+    async def get_response(self, system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, previous_response_id=None, conversation_id=None, prompt=None):
+        # Build messages list
+        try:
+            from agents.models.chatcmpl_converter import Converter
+            messages = Converter.items_to_messages(input)
+        except Exception:
+            if isinstance(input, str):
+                messages = [{"role": "user", "content": input}]
+            else:
+                messages = [{"role": "user", "content": str(input)}]
+
+        if system_instructions:
+            messages.insert(0, {"role": "system", "content": system_instructions})
+
+        body = {"model": self.model, "messages": messages}
+        try:
+            if output_schema and not output_schema.is_plain_text():
+                body["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": "final_output", "strict": output_schema.is_strict_json_schema(), "schema": output_schema.json_schema()},
+                }
+        except Exception:
+            pass
+
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+
+        url = str(self._base).rstrip("/") + "/v1/chat/completions"
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            resp = await http.post(url, json=body, headers=headers)
+            resp.raise_for_status()
+            j = resp.json()
+
+        # Extract text from the first choice message
+        text = None
+        try:
+            choices = j.get("choices") if isinstance(j, dict) else None
+            if choices and isinstance(choices, list) and len(choices) > 0:
+                msg = choices[0].get("message")
+                if isinstance(msg, dict):
+                    content = msg.get("content")
+                    if isinstance(content, str):
+                        text = content
+                    elif isinstance(content, dict) and "text" in content:
+                        text = content.get("text")
+        except Exception:
+            text = None
+
+        if text is None:
+            text = j.get("text") if isinstance(j, dict) and "text" in j else str(j)
+
+        output_item = {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}
+        return ModelResponse(output=[output_item], usage=Usage(), response_id=None)
+
+    async def stream_response(self, system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, previous_response_id=None, conversation_id=None, prompt=None):
+        # Simple non-streaming shim: yield the final response as a single completed event.
+        from collections.abc import AsyncIterator
+
+        response = await self.get_response(system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, previous_response_id=previous_response_id, conversation_id=conversation_id, prompt=prompt)
+        async def _aiter():
+            yield response
+
+        return _aiter()
+
+
+
 def _normalize_base(url: str) -> str:
     # Ensure we return a base URL without a trailing `/v1` segment. The
     # OpenAI client will append the API path (e.g. `/v1/responses`), so if the
@@ -65,20 +145,28 @@ def _supports_responses(client: Optional[AsyncOpenAI] = None, timeout: float = 1
         base = OLLAMA_URL
         if client is not None:
             base = getattr(client, "base_url", base)
-        base = _normalize_base(base)
+            base = _normalize_base(str(base))
         url = base.rstrip("/") + "/v1/responses"
         with httpx.Client(timeout=timeout) as http:
             try:
-                r = http.options(url)
+                # Send a minimal POST similar to a create call; only 2xx indicates
+                # the endpoint can accept create requests. OPTIONS may be present
+                # even when POST/create is not implemented.
+                try:
+                    r = http.post(url, json={"model": "", "input": ""})
+                except Exception as ex_post:
+                    print(f"[debug] responses POST probe exception for {url}: {ex_post}")
+                    r = None
             except Exception:
                 print(f"[debug] responses probe failed for {url}")
                 return False
-            # If it's 404, responses aren't supported. 204/200/405 are ok.
             try:
-                print(f"[debug] responses probe {url} status={r.status_code}")
+                if r is not None:
+                    print(f"[debug] responses probe {url} status={r.status_code}")
             except Exception:
                 pass
-            return r.status_code != 404
+            # Consider supported only when POST returns 2xx
+            return r is not None and 200 <= r.status_code < 300
     except Exception:
         return False
 
@@ -102,12 +190,33 @@ def make_model_for_ollama(model_name: str, client: Optional[AsyncOpenAI] = None)
             # If constructing fails for any reason, fall back to chat model below
             pass
 
+    # If the base URL is local, prefer the local chat shim immediately to avoid
+    # SDK calls that may 404 against local Ollama builds.
+    base_for_check = getattr(client, "base_url", OLLAMA_URL) if client is not None else OLLAMA_URL
+    base_for_check = _normalize_base(str(base_for_check))
+    if any(host in base_for_check for host in ("localhost", "127.0.0.1")):
+        base = getattr(client, "base_url", OLLAMA_URL) if client is not None else OLLAMA_URL
+        base = _normalize_base(str(base))
+        key = None
+        try:
+            key = getattr(client, "api_key", None)
+        except Exception:
+            key = None
+        print(f"[debug] make_model_for_ollama: detected local Ollama, returning _LocalOllamaChatShim for {model_name}")
+        return _LocalOllamaChatShim(model_name, base, key or OLLAMA_API_KEY), False
+
+    # Determine whether the base is a local Ollama instance. For local servers
+    # prefer our lightweight HTTP shims (generate/chat) to avoid relying on the
+    # OpenAI SDK which can return 404s against older/local Ollama builds.
+    base_for_check = getattr(client, "base_url", OLLAMA_URL) if client is not None else OLLAMA_URL
+    base_for_check = _normalize_base(str(base_for_check))
+    is_local = any(host in base_for_check for host in ("localhost", "127.0.0.1"))
+
     # If Ollama exposes a legacy /api/generate endpoint (some local builds), prefer
-    # a small generate shim — this avoids depending on the OpenAI SDK paths that
-    # may 404 on certain Ollama versions.
+    # a small generate shim when local — this avoids depending on the OpenAI SDK
+    # paths that may 404 on certain Ollama versions.
     try:
-        base_tmp = getattr(client, "base_url", OLLAMA_URL) if client is not None else OLLAMA_URL
-        base_tmp = _normalize_base(base_tmp)
+        base_tmp = base_for_check
         gen_url = base_tmp.rstrip("/") + "/api/generate"
         with httpx.Client(timeout=1.0) as http:
             try:
@@ -126,9 +235,9 @@ def make_model_for_ollama(model_name: str, client: Optional[AsyncOpenAI] = None)
             except Exception:
                 pass
             # Treat any non-404 as evidence the endpoint exists
-            if rgen is not None and rgen.status_code != 404:
+            if rgen is not None and rgen.status_code != 404 and is_local:
                 base = getattr(client, "base_url", OLLAMA_URL) if client is not None else OLLAMA_URL
-                base = _normalize_base(base)
+                base = _normalize_base(str(base))
                 key = None
                 try:
                     key = getattr(client, "api_key", None)
@@ -160,7 +269,7 @@ def make_model_for_ollama(model_name: str, client: Optional[AsyncOpenAI] = None)
             except Exception:
                 pass
             if r is not None and 200 <= r.status_code < 300:
-                # Create a lightweight shim that posts directly to /v1/chat/completions
+                # For local Ollama prefer the local shim to avoid SDK issues
                 class _OllamaChatModel:
                     def __init__(self, model: str, base: str, api_key: Optional[str]):
                         self.model = model
@@ -231,12 +340,15 @@ def make_model_for_ollama(model_name: str, client: Optional[AsyncOpenAI] = None)
                         return ModelResponse(output=[output_item], usage=Usage(), response_id=None)
 
                 base = getattr(client, "base_url", OLLAMA_URL) if client is not None else OLLAMA_URL
-                base = _normalize_base(base)
+                base = _normalize_base(str(base))
                 key = None
                 try:
                     key = getattr(client, "api_key", None)
                 except Exception:
                     key = None
+                if is_local:
+                    print(f"[debug] make_model_for_ollama: returning _LocalOllamaChatShim for {model_name}")
+                    return _LocalOllamaChatShim(model_name, base, key or OLLAMA_API_KEY), False
                 print(f"[debug] make_model_for_ollama: returning _OllamaChatModel for {model_name}")
                 return _OllamaChatModel(model_name, base, key or OLLAMA_API_KEY), False
     except Exception:
